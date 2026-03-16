@@ -166,9 +166,11 @@ function ImageUploadZone({ onFileSelect, preview, isDragging, onDragOver, onDrag
   )
 }
 
-function ItemRow({ item, index, people, onAssign, onUpdatePrice }) {
+function ItemRow({ item, index, people, onAssign, onUpdatePrice, onRemoveItem, onUpdateName }) {
   const [isEditingPrice, setIsEditingPrice] = useState(false)
   const [priceValue, setPriceValue] = useState(String(item.price))
+  const [isEditingName, setIsEditingName] = useState(false)
+  const [nameValue, setNameValue] = useState(item.name)
 
   const handlePriceSave = () => {
     const newPrice = parseFloat(priceValue) || 0
@@ -188,10 +190,68 @@ function ItemRow({ item, index, people, onAssign, onUpdatePrice }) {
     if (e.key === 'Escape') handlePriceCancel()
   }
 
+  const handleNameSave = () => {
+    if (nameValue.trim() && nameValue !== item.name) {
+      onUpdateName(index, nameValue.trim())
+    }
+    setIsEditingName(false)
+  }
+
+  const handleNameCancel = () => {
+    setNameValue(item.name)
+    setIsEditingName(false)
+  }
+
+  const handleNameKeyDown = (e) => {
+    if (e.key === 'Enter') handleNameSave()
+    if (e.key === 'Escape') handleNameCancel()
+  }
+
   return (
     <div className="py-3.5 border-b border-gray-100 last:border-0">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-sm font-medium text-gray-800 flex-1 mr-3">{item.name}</span>
+        <div className="flex items-center gap-1.5 flex-1 mr-3">
+          {!isEditingName ? (
+            <>
+              <span 
+                className="text-sm font-medium text-gray-800 flex-1 cursor-pointer hover:text-indigo-600 transition-colors"
+                onClick={() => setIsEditingName(true)}
+              >
+                {item.name}
+              </span>
+              <button
+                onClick={() => setIsEditingName(true)}
+                className="text-xs text-gray-400 hover:text-indigo-500 px-1 py-1 rounded transition-colors flex-shrink-0"
+                title="Edit name"
+              >
+                ✎
+              </button>
+            </>
+          ) : (
+            <>
+              <input
+                type="text"
+                value={nameValue}
+                onChange={(e) => setNameValue(e.target.value)}
+                onKeyDown={handleNameKeyDown}
+                className="flex-1 px-2 py-1 text-sm font-medium border border-indigo-300 rounded-lg focus:outline-none bg-white"
+                autoFocus
+              />
+              <button
+                onClick={handleNameSave}
+                className="text-xs font-semibold text-green-600 hover:text-green-700 px-2 py-1 rounded transition-colors flex-shrink-0"
+              >
+                ✓
+              </button>
+              <button
+                onClick={handleNameCancel}
+                className="text-xs font-semibold text-gray-400 hover:text-gray-600 px-2 py-1 rounded transition-colors flex-shrink-0"
+              >
+                ✕
+              </button>
+            </>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           {!isEditingPrice ? (
             <>
@@ -234,6 +294,13 @@ function ItemRow({ item, index, people, onAssign, onUpdatePrice }) {
               </button>
             </div>
           )}
+          <button
+            onClick={() => onRemoveItem(index)}
+            className="text-xs text-red-400 hover:text-red-600 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded transition-colors font-medium"
+            title="Delete item"
+          >
+            🗑️
+          </button>
         </div>
       </div>
       <div className="flex flex-wrap gap-1.5">
@@ -523,6 +590,21 @@ export default function App() {
     setSplitSummary(null)
   }
 
+  const handleRemoveItem = (index) => {
+    setItems(prev => prev.filter((_, i) => i !== index))
+    setSplitSummary(null)
+  }
+
+  const handleAddItem = () => {
+    setItems(prev => [...prev, { name: 'New Item', price: 0, assignedTo: 'shared' }])
+    setSplitSummary(null)
+  }
+
+  const handleUpdateName = (index, newName) => {
+    setItems(prev => prev.map((it, i) => i === index ? { ...it, name: newName } : it))
+    setSplitSummary(null)
+  }
+
   // ── Generate summary ───────────────────────────────────────────────────────
 
   const handleGenerateSummary = () => {
@@ -729,8 +811,18 @@ export default function App() {
 
             <div className="px-5 pb-2">
               {items.map((item, i) => (
-                <ItemRow key={i} item={item} index={i} people={people} onAssign={handleAssign} onUpdatePrice={handleUpdatePrice} />
+                <ItemRow key={i} item={item} index={i} people={people} onAssign={handleAssign} onUpdatePrice={handleUpdatePrice} onRemoveItem={handleRemoveItem} onUpdateName={handleUpdateName} />
               ))}
+            </div>
+
+            {/* Add new item button */}
+            <div className="px-5 pb-3 border-b border-gray-100">
+              <button
+                onClick={handleAddItem}
+                className="w-full py-2 px-3 rounded-lg text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 transition-colors flex items-center justify-center gap-1.5"
+              >
+                <span>+</span> Add Item
+              </button>
             </div>
 
             {/* Live split totals */}
