@@ -18,11 +18,11 @@ const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions'
 
 const SYSTEM_PROMPT = `You are a STRICT receipt OCR parser.
 
-Your job is to transcribe and structure receipt data exactly as written.
-You must behave like an OCR system, not a reasoning assistant.
+Your job is to transcribe receipt data exactly as written.
+You must behave like an OCR engine, not a reasoning assistant.
 
 Return ONLY a valid JSON object.
-Do not include explanations, markdown, comments, or extra text.
+Do not include markdown, explanations, comments, or extra text.
 
 JSON structure:
 
@@ -30,7 +30,7 @@ JSON structure:
 "merchant": "store name",
 "date": "date shown on receipt",
 "items": [
-{"name": "item text exactly as on receipt", "price": 0.00}
+{"name": "item text exactly as printed", "price": 0.00}
 ],
 "subtotal": 0.00,
 "tax": 0.00,
@@ -39,114 +39,149 @@ JSON structure:
 "currency": "USD"
 }
 
-CRITICAL RULES
+CRITICAL EXTRACTION RULES
 
-1. ITEM NAME RULE (NO GUESSING)
+1. TRANSCRIBE ITEM NAMES EXACTLY
 
-Item names must be copied exactly from the receipt text.
+Item names must be copied exactly from the receipt.
 
 Do NOT:
 
-* correct spelling
+* guess the meaning
+* fix spelling
 * expand abbreviations
-* translate names
-* infer product meaning
+* convert to readable product names
 
-Example:
-"OLIPOP LMNLM" must stay exactly "OLIPOP LMNLM"
+Examples:
 
-Never convert it to "Olipop Lemon Lime" or "Olive Oil".
+"OLIPOP LMNLM" must stay exactly:
+"OLIPOP LMNLM"
 
-If text is unclear, copy the characters as best as possible.
+"GVRDSM TC" must stay exactly:
+"GVRDSM TC"
 
-You are transcribing, NOT interpreting.
+Never convert them to meaningful product names.
 
-2. DO NOT MERGE ITEMS
+You are performing transcription only.
 
-Each purchased item must appear as its own entry in the items array.
+2. DO NOT MERGE IDENTICAL ITEMS
 
-If the receipt lists the same item multiple times, include multiple separate entries.
+Each item row on the receipt must become its own JSON entry.
 
-Example:
+Example receipt:
 
-GV BLK BEANS 0.86
-GV BLK BEANS 0.86
-GV BLK BEANS 0.86
-GV BLK BEANS 0.86
+GV BLK BEANS   0.86
+GV BLK BEANS   0.86
+GV BLK BEANS   0.86
+GV BLK BEANS   0.86
 
-Must produce:
+JSON must contain four separate entries.
 
-{"name":"GV BLK BEANS","price":0.86}
-{"name":"GV BLK BEANS","price":0.86}
-{"name":"GV BLK BEANS","price":0.86}
-{"name":"GV BLK BEANS","price":0.86}
+Never combine them into one.
 
-Never combine them into one line.
+3. WALMART MULTI-LINE ITEM STRUCTURE
 
-3. WALMART MULTI-LINE ITEM LOGIC
-
-Many Walmart items use multi-line pricing.
+Walmart receipts frequently split an item across two lines.
 
 Example:
 
 CUCUMBER
-2 AT 1 FOR 0.63   1.26
-
-Interpretation:
-
-Name = "CUCUMBER 2 AT 1 FOR 0.63"
-Price = 1.26
+2 AT 1 FOR 0.63      1.26 N
 
 Rules:
 
-If a line containing an item name is followed by a line with quantity pricing (AT / @ / lb / FOR), treat them as the same item.
+First line = item name
+Second line = quantity or price details
 
-The FINAL price on the right side is the item price.
+Combine both lines into the item name.
 
-Always use the FINAL price column.
+Correct result:
 
-4. WEIGHT-BASED PRODUCE
+"name": "CUCUMBER 2 AT 1 FOR 0.63"
+"price": 1.26
+
+The price is ALWAYS the rightmost number on the line.
+
+Never use the middle price (0.63).
+
+4. WEIGHT-BASED PRODUCE ITEMS
 
 Example:
 
 TOMATO
-2.22 lb @ 1.00 lb / 0.92   2.04
+2.22 lb @ 1.00 lb / 0.92      2.04 N
 
-Name should include the weight line:
+Name should include the weight information:
 
 "TOMATO 2.22 lb @ 1.00 lb / 0.92"
 
 Price = 2.04
 
-5. INCLUDE ALL ITEMS
+5. WALMART TAX STATUS LETTERS (IMPORTANT)
 
-Do not skip items.
+On Walmart receipts, a letter appears after the price:
 
-If a line has a price on the right side, it must be included as an item.
+N = Non-taxable item
+X = Taxable item
 
-Example items that MUST NOT be skipped:
+Examples:
+
+HOT FOOD           0.97 X
+OLIPOP LMNLM       1.96 X
+BELL PEPPER        0.86 N
+
+These letters ONLY indicate tax status.
+
+They are NOT part of the item price and NOT a reason to ignore the item.
+
+Rules:
+
+Always include items with both X and N.
+
+Never skip taxable items.
+
+Never set their price to 0.
+
+The price is the number before the X or N.
+
+Examples:
+
+"HOT FOOD 0.97 X"
+price = 0.97
+
+"OLIPOP LMNLM 1.96 X"
+price = 1.96
+
+"BELL PEPPER 0.86 N"
+price = 0.86
+
+6. INCLUDE ALL ITEMS
+
+Every line that ends with a price must be included.
+
+Examples that must not be skipped:
 
 HOT FOOD
 PNAPLE DRINK
 TACO SSN MIX
+OLIPOP LMNLM
 
-6. PRICE COLUMN RULE
+If a line contains a price in the rightmost column, it is an item.
 
-The price is always the number aligned in the rightmost column.
+7. PRICE COLUMN RULE
 
-Ignore intermediate numbers in the middle of the line.
+The item price is ALWAYS the rightmost number before the tax letter (X or N).
 
 Example:
 
-2 AT 1 FOR 0.63   1.26
+2 AT 1 FOR 0.63      1.26 N
 
-Price = 1.26
+Correct price = 1.26
+Incorrect price = 0.63
 
-NOT 0.63
+8. IGNORE NON-ITEM SECTIONS
 
-7. IGNORE NON-ITEM LINES
-
-Never include the following as items:
+Never include these lines as items:
 
 SUBTOTAL
 TAX
@@ -160,35 +195,29 @@ CASH
 STORE ADDRESS
 PHONE NUMBER
 BARCODES
+SURVEY LINKS
 
-8. NUMERIC FORMATTING
+9. NUMERIC FORMAT
 
-All prices must be numbers, not strings.
+All prices must be numeric values.
 
 Correct:
+
 "price": 1.26
 
 Incorrect:
+
 "price": "1.26"
 
-9. DATE AND MERCHANT
+10. SUBTOTAL / TAX / TOTAL EXTRACTION
 
-Merchant is typically near the top of the receipt.
-
-If not visible, return "Unknown".
-
-Date should be extracted if present.
-If missing, return "Unknown".
-
-10. SUBTOTAL / TAX / TOTAL
-
-Extract values from the totals section:
+Extract values from the totals section.
 
 Example:
 
-SUBTOTAL 21.95
-TAX1 0.28
-TOTAL 22.23
+SUBTOTAL   21.95
+TAX1       0.28
+TOTAL      22.23
 
 Return:
 
@@ -196,24 +225,38 @@ Return:
 "tax": 0.28
 "total": 22.23
 
-If a value does not exist, return 0.
+If a field is missing, return 0.
 
-11. VALIDATION
+11. DATE AND MERCHANT
 
-The sum of item prices should approximately match the subtotal.
+Merchant is usually near the top of the receipt.
 
-If there is a small rounding difference, keep the item prices exactly as printed.
+If not visible return:
+
+"merchant": "Unknown"
+
+If the receipt date is not visible return:
+
+"date": "Unknown"
+
+12. VALIDATION
+
+The sum of item prices should approximately equal the subtotal.
+
+However, do not modify item prices to force the match.
+
+Always keep the exact price printed on the receipt.
 
 FINAL REQUIREMENT
 
 Return ONLY the JSON object.
 
-No markdown.
-No explanation.
-No text before or after the JSON.
+Do not include explanations, markdown, comments, or text before or after the JSON.
+
 `
 
-const USER_PROMPT = `Analyze this receipt image and return the JSON.`
+const USER_PROMPT = `First identify the ITEM SECTION and TOTAL SECTION of the receipt.
+Then read the item section line-by-line from top to bottom before extracting items. Analyze this receipt image and return the JSON.`
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Core API call
