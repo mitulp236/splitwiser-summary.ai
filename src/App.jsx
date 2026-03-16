@@ -77,16 +77,16 @@ function calcSplit(people, items, meta) {
   return result
 }
 
-function generateFullText(people, split, meta) {
-  const taxTip = (Number(meta.tax) || 0) + (Number(meta.tip) || 0)
-  const taxLabel = meta.tax > 0 && meta.tip > 0 ? 'Tax & Tip' : meta.tax > 0 ? 'Tax' : 'Tip'
+function generateFullText(people, split, meta, subtotal, tax, tip, total) {
+  const taxTip = tax + tip
+  const taxLabel = tax > 0 && tip > 0 ? 'Tax & Tip' : tax > 0 ? 'Tax' : 'Tip'
   const div = '═'.repeat(40)
   const thin = '─'.repeat(36)
 
   let t = `${div}\n 📊 SPLIT SUMMARY\n`
   if (meta.merchant !== 'Unknown') t += ` 📍 ${meta.merchant}\n`
   if (meta.date !== 'Unknown') t += ` 📅 ${meta.date}\n`
-  t += ` 💰 Total: ${fmt(meta.total)}\n${div}\n`
+  t += ` 💰 Total: ${fmt(total)}\n${div}\n`
 
   people.forEach(person => {
     const data = split[person]
@@ -166,12 +166,75 @@ function ImageUploadZone({ onFileSelect, preview, isDragging, onDragOver, onDrag
   )
 }
 
-function ItemRow({ item, index, people, onAssign }) {
+function ItemRow({ item, index, people, onAssign, onUpdatePrice }) {
+  const [isEditingPrice, setIsEditingPrice] = useState(false)
+  const [priceValue, setPriceValue] = useState(String(item.price))
+
+  const handlePriceSave = () => {
+    const newPrice = parseFloat(priceValue) || 0
+    if (newPrice !== item.price) {
+      onUpdatePrice(index, newPrice)
+    }
+    setIsEditingPrice(false)
+  }
+
+  const handlePriceCancel = () => {
+    setPriceValue(String(item.price))
+    setIsEditingPrice(false)
+  }
+
+  const handlePriceKeyDown = (e) => {
+    if (e.key === 'Enter') handlePriceSave()
+    if (e.key === 'Escape') handlePriceCancel()
+  }
+
   return (
     <div className="py-3.5 border-b border-gray-100 last:border-0">
       <div className="flex items-center justify-between mb-2">
         <span className="text-sm font-medium text-gray-800 flex-1 mr-3">{item.name}</span>
-        <span className="text-sm font-bold text-gray-900 tabular-nums">{fmt(item.price)}</span>
+        <div className="flex items-center gap-2">
+          {!isEditingPrice ? (
+            <>
+              <span className="text-sm font-bold text-gray-900 tabular-nums cursor-pointer hover:text-indigo-600 transition-colors" onClick={() => setIsEditingPrice(true)}>
+                {fmt(item.price)}
+              </span>
+              <button
+                onClick={() => setIsEditingPrice(true)}
+                className="text-xs text-gray-400 hover:text-indigo-500 px-2 py-1 rounded transition-colors"
+                title="Edit price"
+              >
+                ✎
+              </button>
+            </>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <div className="flex items-center bg-white border border-indigo-300 rounded-lg">
+                <span className="text-xs text-gray-500 px-2 py-1">$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={priceValue}
+                  onChange={(e) => setPriceValue(e.target.value)}
+                  onKeyDown={handlePriceKeyDown}
+                  className="w-16 px-1 py-1 text-sm font-medium appearance-none focus:outline-none bg-transparent"
+                  autoFocus
+                />
+              </div>
+              <button
+                onClick={handlePriceSave}
+                className="text-xs font-semibold text-green-600 hover:text-green-700 px-2 py-1 rounded transition-colors"
+              >
+                ✓
+              </button>
+              <button
+                onClick={handlePriceCancel}
+                className="text-xs font-semibold text-gray-400 hover:text-gray-600 px-2 py-1 rounded transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+        </div>
       </div>
       <div className="flex flex-wrap gap-1.5">
         <button onClick={() => onAssign(index, 'shared')}
@@ -196,10 +259,10 @@ function ItemRow({ item, index, people, onAssign }) {
   )
 }
 
-function SummaryCard({ people, split, meta, onCopy, copied }) {
-  const taxTip = (Number(meta.tax) || 0) + (Number(meta.tip) || 0)
-  const taxLabel = meta.tax > 0 && meta.tip > 0 ? 'Tax & Tip' : meta.tax > 0 ? 'Tax' : 'Tip'
-  const fullText = generateFullText(people, split, meta)
+function SummaryCard({ people, split, meta, subtotal, tax, tip, total, onCopy, copied }) {
+  const taxTip = tax + tip
+  const taxLabel = tax > 0 && tip > 0 ? 'Tax & Tip' : tax > 0 ? 'Tax' : 'Tip'
+  const fullText = generateFullText(people, split, meta, subtotal, tax, tip, total)
 
   return (
     <div id="summary-card" className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -228,7 +291,7 @@ function SummaryCard({ people, split, meta, onCopy, copied }) {
         </div>
         <div className="flex items-center justify-between mt-3 pt-3 border-t border-indigo-400/30">
           <p className="text-indigo-200 text-xs">Total bill</p>
-          <p className="font-bold text-xl tabular-nums">{fmt(meta.total)}</p>
+          <p className="font-bold text-xl tabular-nums">{fmt(total)}</p>
         </div>
       </div>
 
@@ -372,11 +435,19 @@ export default function App() {
   const [receiptMeta, setReceiptMeta] = useState(null)
   const [items, setItems] = useState([])
   const [error, setError] = useState('')
+  const [editingTax, setEditingTax] = useState(false)
+  const [taxValue, setTaxValue] = useState('0')
 
   const [splitSummary, setSplitSummary] = useState(null) // full split data object
   const [copied, setCopied] = useState(false)
 
   const hasResults = items.length > 0
+
+  // Calculate subtotal from items
+  const subtotal = items.reduce((sum, item) => sum + (Number(item.price) || 0), 0)
+  const tax = parseFloat(taxValue) || 0
+  const tip = receiptMeta?.tip || 0
+  const total = subtotal + tax + tip
 
   // ── File handling ──────────────────────────────────────────────────────────
 
@@ -398,6 +469,7 @@ export default function App() {
     setReceiptMeta(null)
     setItems([])
     setSplitSummary(null)
+    setTaxValue('0')
   }, [preview])
 
   const handleDragOver = useCallback((e) => { e.preventDefault(); setIsDragging(true) }, [])
@@ -423,12 +495,10 @@ export default function App() {
       setReceiptMeta({
         merchant: data.merchant || 'Unknown',
         date: data.date || 'Unknown',
-        subtotal: Number(data.subtotal) || 0,
-        tax: Number(data.tax) || 0,
         tip: Number(data.tip) || 0,
-        total: Number(data.total) || 0,
         currency: data.currency || 'USD',
       })
+      setTaxValue(String(Number(data.tax) || 0))
       setItems((data.items || []).map(it => ({
         name: String(it.name || 'Item'),
         price: Number(it.price) || 0,
@@ -448,10 +518,15 @@ export default function App() {
     setSplitSummary(null)
   }
 
+  const handleUpdatePrice = (index, newPrice) => {
+    setItems(prev => prev.map((it, i) => i === index ? { ...it, price: newPrice } : it))
+    setSplitSummary(null)
+  }
+
   // ── Generate summary ───────────────────────────────────────────────────────
 
   const handleGenerateSummary = () => {
-    const data = calcSplit(people, items, receiptMeta)
+    const data = calcSplit(people, items, { tax, tip })
     setSplitSummary(data)
     setTimeout(() => {
       document.getElementById('summary-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -467,7 +542,7 @@ export default function App() {
 
   // ── Live split totals ──────────────────────────────────────────────────────
 
-  const liveSplit = hasResults && people.length > 0 ? calcSplit(people, items, receiptMeta) : null
+  const liveSplit = hasResults && people.length > 0 ? calcSplit(people, items, { tax, tip }) : null
 
   const handleNavAction = (action) => {
     if (action === 'settings') {
@@ -595,15 +670,55 @@ export default function App() {
                 </div>
                 <div className="text-right">
                   <p className="text-xs text-indigo-200">Total</p>
-                  <p className="font-bold text-xl tabular-nums">{fmt(receiptMeta.total)}</p>
+                  <p className="font-bold text-xl tabular-nums">{fmt(total)}</p>
                 </div>
               </div>
-              {(receiptMeta.tax > 0 || receiptMeta.tip > 0) && (
+              {(tax > 0 || tip > 0 || editingTax) && (
                 <div className="flex gap-3 mt-2 pt-2 border-t border-indigo-400/30">
-                  {receiptMeta.subtotal > 0 && <span className="text-xs text-indigo-200">Subtotal {fmt(receiptMeta.subtotal)}</span>}
-                  {receiptMeta.tax > 0 && <span className="text-xs text-indigo-200">Tax {fmt(receiptMeta.tax)}</span>}
-                  {receiptMeta.tip > 0 && <span className="text-xs text-indigo-200">Tip {fmt(receiptMeta.tip)}</span>}
+                  {subtotal > 0 && <span className="text-xs text-indigo-200">Subtotal {fmt(subtotal)}</span>}
+                  <div className="flex items-center gap-1">
+                    {!editingTax ? (
+                      <>
+                        <span className="text-xs text-indigo-200 cursor-pointer hover:text-white transition-colors" onClick={() => { setEditingTax(true); }}>Tax {fmt(tax)}</span>
+                        <button
+                          onClick={() => setEditingTax(true)}
+                          className="text-xs text-indigo-200 hover:text-white px-1 transition-colors"
+                          title="Edit tax"
+                        >
+                          ✎
+                        </button>
+                      </>
+                    ) : (
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs">$</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={taxValue}
+                          onChange={(e) => setTaxValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') setEditingTax(false)
+                            if (e.key === 'Escape') { setTaxValue(String(tax)); setEditingTax(false) }
+                          }}
+                          className="w-12 px-1 text-xs font-medium appearance-none focus:outline-none bg-indigo-600 rounded text-white"
+                          autoFocus
+                        />
+                        <button
+                          onClick={() => setEditingTax(false)}
+                          className="text-xs text-white hover:opacity-80 px-1 transition-opacity"
+                        >
+                          ✓
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {tip > 0 && <span className="text-xs text-indigo-200">Tip {fmt(tip)}</span>}
                 </div>
+              )}
+              {tax === 0 && tip === 0 && !editingTax && (
+                <p className="text-xs text-indigo-300 mt-2 cursor-pointer hover:text-white transition-colors" onClick={() => { setEditingTax(true); }}>
+                  💡 Click to add tax or tip
+                </p>
               )}
             </div>
 
@@ -614,7 +729,7 @@ export default function App() {
 
             <div className="px-5 pb-2">
               {items.map((item, i) => (
-                <ItemRow key={i} item={item} index={i} people={people} onAssign={handleAssign} />
+                <ItemRow key={i} item={item} index={i} people={people} onAssign={handleAssign} onUpdatePrice={handleUpdatePrice} />
               ))}
             </div>
 
@@ -642,17 +757,17 @@ export default function App() {
             )}
 
             {/* Tax warning */}
-            {(receiptMeta.tax > 0 || receiptMeta.tip > 0) && (
+            {(tax > 0 || tip > 0) && (
               <div className="mx-5 mb-4 p-3.5 rounded-xl bg-amber-50 border border-amber-200 flex items-start gap-2.5">
                 <span className="text-base flex-shrink-0">⚠️</span>
                 <div>
                   <p className="text-xs font-bold text-amber-800 mb-0.5">
-                    {receiptMeta.tax > 0 && receiptMeta.tip > 0 ? 'Tax & Tip' : receiptMeta.tax > 0 ? 'Tax' : 'Tip'} detected
-                    {' '}— {[receiptMeta.tax > 0 && `Tax ${fmt(receiptMeta.tax)}`, receiptMeta.tip > 0 && `Tip ${fmt(receiptMeta.tip)}`].filter(Boolean).join('  +  ')}
+                    {tax > 0 && tip > 0 ? 'Tax & Tip' : tax > 0 ? 'Tax' : 'Tip'} detected
+                    {' '}— {[tax > 0 && `Tax ${fmt(tax)}`, tip > 0 && `Tip ${fmt(tip)}`].filter(Boolean).join('  +  ')}
                   </p>
                   <p className="text-xs text-amber-700 leading-relaxed">
                     This will be <span className="font-semibold">divided equally</span> among all {people.length || 'N'} people
-                    {people.length > 0 ? ` (${fmt(((receiptMeta.tax || 0) + (receiptMeta.tip || 0)) / people.length)}/person)` : ''}.
+                    {people.length > 0 ? ` (${fmt(((tax || 0) + (tip || 0)) / people.length)}/person)` : ''}.
                     Per-item tax rates are unknown, so equal split is used.
                   </p>
                 </div>
@@ -683,6 +798,10 @@ export default function App() {
             people={people}
             split={splitSummary}
             meta={receiptMeta}
+            subtotal={subtotal}
+            tax={tax}
+            tip={tip}
+            total={total}
             onCopy={handleCopy}
             copied={copied}
           />
